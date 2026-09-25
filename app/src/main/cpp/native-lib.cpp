@@ -1,10 +1,12 @@
 #include <jni.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -23,15 +25,82 @@ std::atomic<bool> g_ir_running{false};
 std::atomic<bool> g_ir_connected{false};
 int g_ir_socket = -1;
 std::thread g_ir_rx_thread;
+std::thread g_ir_tx_thread;
 std::string g_ir_status = "Disconnected";
+
+// Match the desktop Qt frontend: collect consecutive IR bytes and flush the
+// accumulated packet after 5 ms of inactivity.
+std::mutex g_tx_mutex;
+std::condition_variable g_tx_cv;
+std::vector<uint8_t> g_tx_buffer;
+std::chrono::steady_clock::time_point g_tx_last_byte;
+bool g_tx_pending = false;
 
 void setIrStatus(const std::string& value) {
     std::scoped_lock lock(g_ir_mutex);
     g_ir_status = value;
 }
 
+bool sendAll(const uint8_t* data, size_t size) {
+    std::scoped_lock lock(g_ir_mutex);
+    if (g_ir_socket < 0 || !g_ir_connected) return false;
+
+    size_t sent = 0;
+    while (sent < size) {
+        const ssize_t result = send(g_ir_socket, data + sent, size - sent, MSG_NOSIGNAL);
+        if (result <= 0) {
+            g_ir_connected = false;
+            return false;
+        }
+        sent += static_cast<size_t>(result);
+    }
+    return true;
+}
+
+void queueIrByte(uint8_t byte) {
+    if (!g_ir_connected) return;
+    {
+        std::scoped_lock lock(g_tx_mutex);
+        g_tx_buffer.push_back(byte);
+        g_tx_last_byte = std::chrono::steady_clock::now();
+        g_tx_pending = true;
+    }
+    g_tx_cv.notify_one();
+}
+
+void irTxLoop() {
+    std::unique_lock lock(g_tx_mutex);
+    while (g_ir_running) {
+        g_tx_cv.wait(lock, [] { return !g_ir_running || g_tx_pending; });
+        if (!g_ir_running) break;
+
+        const auto deadline = g_tx_last_byte + std::chrono::milliseconds(5);
+        if (g_tx_cv.wait_until(lock, deadline, [deadline] {
+                return !g_ir_running || g_tx_last_byte > deadline - std::chrono::milliseconds(5);
+            })) {
+            if (!g_ir_running) break;
+            continue;
+        }
+
+        // If another byte arrived while the timer was expiring, restart the
+        // 5 ms idle period just like QTimer::start(5) in the desktop frontend.
+        if (std::chrono::steady_clock::now() < g_tx_last_byte + std::chrono::milliseconds(5))
+            continue;
+
+        std::vector<uint8_t> packet;
+        packet.swap(g_tx_buffer);
+        g_tx_pending = false;
+        lock.unlock();
+        if (!packet.empty() && !sendAll(packet.data(), packet.size()))
+            setIrStatus("Disconnected");
+        lock.lock();
+    }
+}
+
 void closeIrSocket() {
     g_ir_running = false;
+    g_tx_cv.notify_all();
+
     int fd = -1;
     {
         std::scoped_lock lock(g_ir_mutex);
@@ -42,8 +111,15 @@ void closeIrSocket() {
         shutdown(fd, SHUT_RDWR);
         close(fd);
     }
-    if (g_ir_rx_thread.joinable() && g_ir_rx_thread.get_id() != std::this_thread::get_id()) {
+    if (g_ir_rx_thread.joinable() && g_ir_rx_thread.get_id() != std::this_thread::get_id())
         g_ir_rx_thread.join();
+    if (g_ir_tx_thread.joinable() && g_ir_tx_thread.get_id() != std::this_thread::get_id())
+        g_ir_tx_thread.join();
+
+    {
+        std::scoped_lock lock(g_tx_mutex);
+        g_tx_buffer.clear();
+        g_tx_pending = false;
     }
     g_ir_connected = false;
     setIrStatus("Disconnected");
@@ -64,14 +140,6 @@ ButtonType toButton(jint value) {
         default: return ButtonType::RIGHT;
     }
 }
-
-void sendIrByte(uint8_t byte) {
-    if (!g_ir_connected) return;
-    std::scoped_lock lock(g_ir_mutex);
-    if (g_ir_socket < 0) return;
-    const ssize_t result = send(g_ir_socket, &byte, 1, MSG_NOSIGNAL);
-    if (result != 1) g_ir_connected = false;
-}
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -87,7 +155,7 @@ Java_org_pocketwalker_android_NativeBridge_loadRom(JNIEnv* env, jobject, jbyteAr
                             reinterpret_cast<jbyte*>(rom.data()));
 
     g_emulator = std::make_unique<PocketWalker>(rom);
-    g_emulator->OnTransmitIR([](uint8_t byte) { sendIrByte(byte); });
+    g_emulator->OnTransmitIR([](uint8_t byte) { queueIrByte(byte); });
     g_thread = std::make_unique<std::thread>([] { g_emulator->Start(); });
     return JNI_TRUE;
 }
@@ -165,6 +233,8 @@ Java_org_pocketwalker_android_NativeBridge_connectIr(JNIEnv* env, jobject, jstri
     for (addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
         fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (fd < 0) continue;
+        int one = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
         close(fd);
         fd = -1;
@@ -184,6 +254,7 @@ Java_org_pocketwalker_android_NativeBridge_connectIr(JNIEnv* env, jobject, jstri
     g_ir_connected = true;
     setIrStatus("Connected");
 
+    g_ir_tx_thread = std::thread(irTxLoop);
     g_ir_rx_thread = std::thread([] {
         uint8_t buffer[1024];
         while (g_ir_running) {
