@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.PocketWalker" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>
