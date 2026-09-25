@@ -13,4 +13,6 @@ object NativeBridge {
     external fun connectIr(host: String, port: Int): Boolean
     external fun disconnectIr()
     external fun irStatus(): String
+
+    external fun getAudioSamples(maxSamples: Int): ShortArray
 }
