@@ -10,9 +10,13 @@ object NativeBridge {
     external fun setButton(button: Int, pressed: Boolean)
     external fun getFrame(): ByteArray
 
+    external fun setSyntheticSteps(enabled: Boolean)
+
     external fun connectIr(host: String, port: Int): Boolean
     external fun disconnectIr()
     external fun irStatus(): String
 
     external fun getAudioSamples(maxSamples: Int): ShortArray
+    external fun getEeprom(): ByteArray
+    external fun setEeprom(data: ByteArray): Boolean
 }

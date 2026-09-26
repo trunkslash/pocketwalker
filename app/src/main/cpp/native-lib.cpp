@@ -231,6 +231,17 @@ Java_org_pocketwalker_android_NativeBridge_setButton(JNIEnv*, jobject, jint butt
     else g_emulator->ReleaseButton(toButton(button));
 }
 
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_pocketwalker_android_NativeBridge_setSyntheticSteps(
+        JNIEnv*, jobject, jboolean enabled) {
+    std::scoped_lock lock(g_mutex);
+
+    if (!g_emulator)
+        return;
+
+    g_emulator->UseSyntheticSteps(enabled == JNI_TRUE);
+}
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_org_pocketwalker_android_NativeBridge_getFrame(JNIEnv* env, jobject) {
     std::scoped_lock lock(g_mutex);
@@ -348,4 +359,59 @@ Java_org_pocketwalker_android_NativeBridge_getAudioSamples(JNIEnv* env, jobject,
     if (!out || samples.empty()) return out;
     env->SetShortArrayRegion(out, 0, static_cast<jsize>(samples.size()), reinterpret_cast<const jshort*>(samples.data()));
     return out;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_org_pocketwalker_android_NativeBridge_getEeprom(
+        JNIEnv* env, jobject) {
+
+    std::scoped_lock lock(g_mutex);
+
+    if (!g_emulator)
+        return env->NewByteArray(0);
+
+    const auto eeprom = g_emulator->GetEepromBuffer();
+
+    jbyteArray result =
+        env->NewByteArray(static_cast<jsize>(eeprom.size()));
+
+    if (!result)
+        return nullptr;
+
+    env->SetByteArrayRegion(
+        result,
+        0,
+        static_cast<jsize>(eeprom.size()),
+        reinterpret_cast<const jbyte*>(eeprom.data())
+    );
+
+    return result;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_pocketwalker_android_NativeBridge_setEeprom(
+        JNIEnv* env, jobject, jbyteArray data) {
+
+    std::scoped_lock lock(g_mutex);
+
+    if (!g_emulator || !data)
+        return JNI_FALSE;
+
+    const jsize len = env->GetArrayLength(data);
+
+    if (len != EEPROM_SIZE)
+        return JNI_FALSE;
+
+    EepromBuffer buffer{};
+
+    env->GetByteArrayRegion(
+        data,
+        0,
+        len,
+        reinterpret_cast<jbyte*>(buffer.data())
+    );
+
+    g_emulator->SetEepromBuffer(buffer);
+
+    return JNI_TRUE;
 }

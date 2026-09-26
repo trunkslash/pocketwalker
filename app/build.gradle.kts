@@ -17,12 +17,22 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++23"
+                arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
             }
         }
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
     }
 
     externalNativeBuild {

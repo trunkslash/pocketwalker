@@ -17,6 +17,7 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import java.util.concurrent.atomic.AtomicBoolean
+import android.util.Log
 
 class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
@@ -58,6 +59,37 @@ class MainActivity : AppCompatActivity() {
             })
         }
         root.addView(controls)
+
+val stepControls = LinearLayout(this).apply {
+    orientation = LinearLayout.HORIZONTAL
+    gravity = Gravity.CENTER
+}
+
+stepControls.addView(Button(this).apply {
+    text = "START WALKING"
+    layoutParams = LinearLayout.LayoutParams(
+        0,
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        1f
+    )
+    setOnClickListener {
+        NativeBridge.setSyntheticSteps(true)
+    }
+})
+
+stepControls.addView(Button(this).apply {
+    text = "STOP WALKING"
+    layoutParams = LinearLayout.LayoutParams(
+        0,
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        1f
+    )
+    setOnClickListener {
+        NativeBridge.setSyntheticSteps(false)
+    }
+})
+
+root.addView(stepControls)
         root.addView(Button(this).apply { text = "Choose PokéWalker ROM"; setOnClickListener { romPicker.launch(arrayOf("application/octet-stream", "*/*")) } })
         status = TextView(this).apply { text = "No ROM loaded"; textSize = 14f; gravity = Gravity.CENTER }
         root.addView(status)
@@ -91,6 +123,7 @@ class MainActivity : AppCompatActivity() {
         irStatus = TextView(this).apply { text = "IR: Disconnected"; textSize = 14f; gravity = Gravity.CENTER }
         root.addView(irStatus)
         setContentView(root)
+        loadSavedRom()
     }
 
     private fun startAudio() {
@@ -124,15 +157,108 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadRom(uri: Uri) {
-        try {
-            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            if (bytes == null) { status.text = "Could not read ROM"; return }
-            val ok = NativeBridge.loadRom(bytes)
-            status.text = if (ok) "ROM loaded: ${displayName(uri)}" else "ROM must be at least 48 KiB"
-        } catch (t: Throwable) { status.text = "Load failed: ${t.message ?: t.javaClass.simpleName}" }
+    try {
+        val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+
+        if (bytes == null) {
+            status.text = "Could not read ROM"
+            return
+        }
+
+        val ok = NativeBridge.loadRom(bytes)
+
+        if (ok) {
+            // Save a private copy for future launches
+            openFileOutput("pokewalker.rom", MODE_PRIVATE).use {
+                it.write(bytes)
+            }
+
+            status.text = "ROM loaded: ${displayName(uri)}"
+        } else {
+            status.text = "ROM must be at least 48 KiB"
+        }
+    } catch (t: Throwable) {
+        status.text = "Load failed: ${t.message ?: t.javaClass.simpleName}"
     }
 
-    private fun displayName(uri: Uri): String {
+}
+
+private fun loadSavedRom() {
+    try {
+        val romFile = getFileStreamPath("pokewalker.rom")
+
+        Log.d(
+            "PocketWalker",
+            "loadSavedRom called: path=${romFile.absolutePath}, exists=${romFile.exists()}, size=${if (romFile.exists()) romFile.length() else 0}"
+        )
+
+        if (!romFile.exists()) {
+            status.text = "No saved ROM found"
+            return
+        }
+
+        val bytes = romFile.readBytes()
+
+        Log.d(
+            "PocketWalker",
+            "Read saved ROM: ${bytes.size} bytes"
+        )
+
+        val ok = NativeBridge.loadRom(bytes)
+
+        Log.d(
+            "PocketWalker",
+            "NativeBridge.loadRom result: $ok"
+        )
+
+if (ok) {
+    val eepromFile = getFileStreamPath("pokewalker.eeprom")
+
+    if (eepromFile.exists()) {
+        val eeprom = eepromFile.readBytes()
+
+        if (eeprom.size == 65536) {
+            val restored = NativeBridge.setEeprom(eeprom)
+            Log.d("PocketWalker", "EEPROM restored: $restored")
+        } else {
+            Log.e("PocketWalker", "Invalid EEPROM size: ${eeprom.size}")
+        }
+    }
+}
+
+        status.text = if (ok) {
+            "Saved PokéWalker ROM loaded"
+        } else {
+            "Saved ROM could not be loaded"
+        }
+
+    } catch (t: Throwable) {
+        Log.e("PocketWalker", "Saved ROM load failed", t)
+
+        status.text =
+            "Saved ROM load failed: ${t.message ?: t.javaClass.simpleName}"
+    }
+}
+
+
+private fun saveEeprom() {
+    try {
+        val eeprom = NativeBridge.getEeprom()
+
+        if (eeprom.size == 65536) {
+            openFileOutput("pokewalker.eeprom", MODE_PRIVATE).use {
+                it.write(eeprom)
+            }
+
+            Log.d("PocketWalker", "EEPROM saved: ${eeprom.size} bytes")
+        } else {
+            Log.e("PocketWalker", "EEPROM not saved; size=${eeprom.size}")
+        }
+    } catch (t: Throwable) {
+        Log.e("PocketWalker", "EEPROM save failed", t)
+    }
+}
+private fun displayName(uri: Uri): String {
         contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (index >= 0 && cursor.moveToFirst()) return cursor.getString(index)
@@ -140,8 +266,14 @@ class MainActivity : AppCompatActivity() {
         return uri.lastPathSegment ?: "ROM"
     }
 
-    override fun onDestroy() {
+   override fun onStop() {
+    saveEeprom()
+    super.onStop()
+}
+
+     override fun onDestroy() {
         stopAudio()
+        saveEeprom()
         NativeBridge.stop()
         super.onDestroy()
     }
