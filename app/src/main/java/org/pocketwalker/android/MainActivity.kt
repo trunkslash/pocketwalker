@@ -45,97 +45,288 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         startAudio()
 
+        val isWatch = resources.configuration.screenWidthDp < 400
+
+        if (isWatch) {
+            createWatchUi()
+        } else {
+            createPhoneUi()
+        }
+
+        loadSavedRom()
+        restoreStepsDelayed()
+    }
+
+    private fun createWatchUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(32, 24, 32, 24)
+            gravity = Gravity.CENTER
+            setPadding(18, 18, 18, 18)
         }
-        root.addView(TextView(this).apply { text = "PocketWalker"; textSize = 28f; gravity = Gravity.CENTER })
-        root.addView(PocketWalkerDisplay(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 620).apply { topMargin = 16; bottomMargin = 16 }
-        })
 
-        val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        val display = PocketWalkerDisplay(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                190
+            ).apply {
+                leftMargin = 12
+                rightMargin = 12
+                bottomMargin = 6
+            }
+        }
+
+        root.addView(display)
+
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
         listOf("◀" to 0, "●" to 1, "▶" to 2).forEach { (label, code) ->
             controls.addView(Button(this).apply {
-                text = label; textSize = 24f
-                layoutParams = LinearLayout.LayoutParams(0, 130, 1f).apply { marginStart = 8; marginEnd = 8 }
+                text = label
+                textSize = 16f
+                minWidth = 0
+                minimumWidth = 0
+                minHeight = 0
+                minimumHeight = 0
+
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    54,
+                    1f
+                ).apply {
+                    marginStart = 2
+                    marginEnd = 2
+                }
+
                 setOnTouchListener { _, event ->
                     when (event.actionMasked) {
-                        MotionEvent.ACTION_DOWN -> { NativeBridge.setButton(code, true); true }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { NativeBridge.setButton(code, false); true }
+                        MotionEvent.ACTION_DOWN -> {
+                            NativeBridge.setButton(code, true)
+                            true
+                        }
+
+                        MotionEvent.ACTION_UP,
+                        MotionEvent.ACTION_CANCEL -> {
+                            NativeBridge.setButton(code, false)
+                            true
+                        }
+
                         else -> false
                     }
                 }
             })
         }
+
         root.addView(controls)
 
-val stepControls = LinearLayout(this).apply {
-    orientation = LinearLayout.HORIZONTAL
-    gravity = Gravity.CENTER
-}
+        // These are kept for the existing ROM/persistence functions,
+        // but intentionally hidden from the watch's main UI.
+        status = TextView(this).apply {
+            visibility = android.view.View.GONE
+        }
 
-stepControls.addView(Button(this).apply {
-    text = "START WALKING"
-    layoutParams = LinearLayout.LayoutParams(
-        0,
-        ViewGroup.LayoutParams.WRAP_CONTENT,
-        1f
-    )
-    setOnClickListener {
-        NativeBridge.setSyntheticSteps(true)
-    }
-})
+        irStatus = TextView(this).apply {
+            visibility = android.view.View.GONE
+        }
 
-stepControls.addView(Button(this).apply {
-    text = "STOP WALKING"
-    layoutParams = LinearLayout.LayoutParams(
-        0,
-        ViewGroup.LayoutParams.WRAP_CONTENT,
-        1f
-    )
-    setOnClickListener {
-        NativeBridge.setSyntheticSteps(false)
-    }
-})
-
-root.addView(stepControls)
-        root.addView(Button(this).apply { text = "Choose PokéWalker ROM"; setOnClickListener { romPicker.launch(arrayOf("application/octet-stream", "*/*")) } })
-        status = TextView(this).apply { text = "No ROM loaded"; textSize = 14f; gravity = Gravity.CENTER }
         root.addView(status)
+        root.addView(irStatus)
 
-        root.addView(TextView(this).apply { text = "melonDS-IR"; textSize = 20f; gravity = Gravity.CENTER; setPadding(0, 20, 0, 4) })
-        val hostInput = EditText(this).apply {
-            hint = "melonDS PC IP (e.g. 192.168.1.100)"; setSingleLine(true); inputType = InputType.TYPE_CLASS_TEXT
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        root.addView(hostInput)
-        val portInput = EditText(this).apply {
-            hint = "Port"; setText("8081"); setSingleLine(true); inputType = InputType.TYPE_CLASS_NUMBER
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        root.addView(portInput)
+        setContentView(root)
+    }
 
-        val irButtons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        irButtons.addView(Button(this).apply {
-            text = "Connect IR"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener {
-                val host = hostInput.text.toString().trim(); val port = portInput.text.toString().toIntOrNull()
-                if (host.isEmpty() || port == null) irStatus.text = "Enter a valid host and port"
-                else Thread { NativeBridge.connectIr(host, port); runOnUiThread { irStatus.text = "IR: ${NativeBridge.irStatus()}" } }.start()
+    private fun createPhoneUi() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(32, 24, 32, 24)
+        }
+
+        root.addView(TextView(this).apply {
+            text = "PocketWalker"
+            textSize = 28f
+            gravity = Gravity.CENTER
+        })
+
+        root.addView(PocketWalkerDisplay(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                620
+            ).apply {
+                topMargin = 16
+                bottomMargin = 16
             }
         })
-        irButtons.addView(Button(this).apply {
-            text = "Disconnect"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { NativeBridge.disconnectIr(); irStatus.text = "IR: ${NativeBridge.irStatus()}" }
+
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        listOf("◀" to 0, "●" to 1, "▶" to 2).forEach { (label, code) ->
+            controls.addView(Button(this).apply {
+                text = label
+                textSize = 24f
+                layoutParams = LinearLayout.LayoutParams(0, 130, 1f).apply {
+                    marginStart = 8
+                    marginEnd = 8
+                }
+
+                setOnTouchListener { _, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            NativeBridge.setButton(code, true)
+                            true
+                        }
+
+                        MotionEvent.ACTION_UP,
+                        MotionEvent.ACTION_CANCEL -> {
+                            NativeBridge.setButton(code, false)
+                            true
+                        }
+
+                        else -> false
+                    }
+                }
+            })
+        }
+
+        root.addView(controls)
+
+        val stepControls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        stepControls.addView(Button(this).apply {
+            text = "START WALKING"
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+            setOnClickListener {
+                NativeBridge.setSyntheticSteps(true)
+            }
         })
+
+        stepControls.addView(Button(this).apply {
+            text = "STOP WALKING"
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+            setOnClickListener {
+                NativeBridge.setSyntheticSteps(false)
+            }
+        })
+
+        root.addView(stepControls)
+
+        root.addView(Button(this).apply {
+            text = "Choose PokéWalker ROM"
+            setOnClickListener {
+                romPicker.launch(arrayOf("application/octet-stream", "*/*"))
+            }
+        })
+
+        status = TextView(this).apply {
+            text = "No ROM loaded"
+            textSize = 14f
+            gravity = Gravity.CENTER
+        }
+        root.addView(status)
+
+        root.addView(TextView(this).apply {
+            text = "melonDS-IR"
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setPadding(0, 20, 0, 4)
+        })
+
+        val hostInput = EditText(this).apply {
+            hint = "melonDS PC IP (e.g. 192.168.1.100)"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        root.addView(hostInput)
+
+        val portInput = EditText(this).apply {
+            hint = "Port"
+            setText("8081")
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_NUMBER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        root.addView(portInput)
+
+        val irButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        irButtons.addView(Button(this).apply {
+            text = "Connect IR"
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+
+            setOnClickListener {
+                val host = hostInput.text.toString().trim()
+                val port = portInput.text.toString().toIntOrNull()
+
+                if (host.isEmpty() || port == null) {
+                    irStatus.text = "Enter a valid host and port"
+                } else {
+                    Thread {
+                        NativeBridge.connectIr(host, port)
+                        runOnUiThread {
+                            irStatus.text = "IR: ${NativeBridge.irStatus()}"
+                        }
+                    }.start()
+                }
+            }
+        })
+
+        irButtons.addView(Button(this).apply {
+            text = "Disconnect"
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+
+            setOnClickListener {
+                NativeBridge.disconnectIr()
+                irStatus.text = "IR: ${NativeBridge.irStatus()}"
+            }
+        })
+
         root.addView(irButtons)
-        irStatus = TextView(this).apply { text = "IR: Disconnected"; textSize = 14f; gravity = Gravity.CENTER }
+
+        irStatus = TextView(this).apply {
+            text = "IR: Disconnected"
+            textSize = 14f
+            gravity = Gravity.CENTER
+        }
+
         root.addView(irStatus)
+
         setContentView(root)
-        loadSavedRom()
-        restoreStepsDelayed()
     }
 
     private fun startAudio() {

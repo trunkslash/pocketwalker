@@ -29,3 +29,8 @@ target_link_libraries(
     pocketwalker_core
     ${log-lib}
 )
+
+# Optimize the native emulator even in Android debug builds.
+# This is especially important on lower-power Wear OS devices.
+target_compile_options(pocketwalker_core PRIVATE -O2)
+target_compile_options(pocketwalker_jni PRIVATE -O2)
