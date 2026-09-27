@@ -5,6 +5,8 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.text.InputType
 import android.view.Gravity
@@ -25,6 +27,15 @@ class MainActivity : AppCompatActivity() {
     private var audioTrack: AudioTrack? = null
     private var audioThread: Thread? = null
     private val audioRunning = AtomicBoolean(false)
+
+    private val saveHandler = Handler(Looper.getMainLooper())
+
+    private val autosaveRunnable = object : Runnable {
+        override fun run() {
+            saveEeprom()
+            saveHandler.postDelayed(this, 5000)
+        }
+    }
 
     private val romPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) loadRom(uri)
@@ -124,6 +135,7 @@ root.addView(stepControls)
         root.addView(irStatus)
         setContentView(root)
         loadSavedRom()
+        restoreStepsDelayed()
     }
 
     private fun startAudio() {
@@ -257,7 +269,65 @@ private fun saveEeprom() {
     } catch (t: Throwable) {
         Log.e("PocketWalker", "EEPROM save failed", t)
     }
+
+    saveSteps()
 }
+
+private fun saveSteps() {
+    try {
+        val sessionSteps = NativeBridge.getSessionSteps()
+        val totalSteps = NativeBridge.getTotalSteps()
+
+        openFileOutput("pokewalker.steps", MODE_PRIVATE).use { out ->
+            out.write(
+                "$sessionSteps,$totalSteps".toByteArray(Charsets.UTF_8)
+            )
+        }
+
+        Log.d(
+            "PocketWalker",
+            "Steps saved: session=$sessionSteps total=$totalSteps"
+        )
+    } catch (t: Throwable) {
+        Log.e("PocketWalker", "Step save failed", t)
+    }
+}
+
+private fun restoreStepsDelayed() {
+    val stepsFile = getFileStreamPath("pokewalker.steps")
+
+    if (!stepsFile.exists()) {
+        Log.d("PocketWalker", "No saved step state found")
+        saveHandler.postDelayed(autosaveRunnable, 5000)
+        return
+    }
+
+    saveHandler.postDelayed({
+        try {
+            val parts = stepsFile.readText().trim().split(",")
+
+            if (parts.size == 2) {
+                val sessionSteps = parts[0].toInt()
+                val totalSteps = parts[1].toInt()
+
+                NativeBridge.restoreSteps(sessionSteps, totalSteps)
+
+                Log.d(
+                    "PocketWalker",
+                    "Steps restored after boot: session=$sessionSteps total=$totalSteps"
+                )
+            } else {
+                Log.e("PocketWalker", "Invalid step save format")
+            }
+        } catch (t: Throwable) {
+            Log.e("PocketWalker", "Delayed step restore failed", t)
+        }
+
+        // Start normal autosaving only after boot restoration.
+        saveHandler.postDelayed(autosaveRunnable, 5000)
+    }, 2000)
+}
+
 private fun displayName(uri: Uri): String {
         contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -266,12 +336,18 @@ private fun displayName(uri: Uri): String {
         return uri.lastPathSegment ?: "ROM"
     }
 
-   override fun onStop() {
+   override fun onPause() {
+        saveEeprom()
+        super.onPause()
+    }
+
+    override fun onStop() {
     saveEeprom()
     super.onStop()
 }
 
      override fun onDestroy() {
+        saveHandler.removeCallbacks(autosaveRunnable)
         stopAudio()
         saveEeprom()
         NativeBridge.stop()

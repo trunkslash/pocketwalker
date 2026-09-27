@@ -38,6 +38,11 @@ public:
     void SetBypassPowerSave(bool value);
     void SetWatts(uint16_t value);
     void SetSessionSteps(uint32_t value);
+
+    uint32_t GetSessionSteps() const;
+    uint32_t GetTotalSteps() const;
+    void RestoreSteps(uint32_t sessionSteps, uint32_t totalSteps);
+
     void SetPause(bool value);
 
     void OnSamplePushed(const EventHandlerCallback<BuzzerInformation>& callback);

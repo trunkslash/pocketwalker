@@ -85,6 +85,22 @@ void PocketWalker::SetSessionSteps(uint32_t value)
     this->soc->memory->Write32(PW_ADDR_TOTAL_STEPS, value);
 }
 
+uint32_t PocketWalker::GetSessionSteps() const
+{
+    return this->soc->memory->Read32(PW_ADDR_SESSION_STEPS);
+}
+
+uint32_t PocketWalker::GetTotalSteps() const
+{
+    return this->soc->memory->Read32(PW_ADDR_TOTAL_STEPS);
+}
+
+void PocketWalker::RestoreSteps(uint32_t sessionSteps, uint32_t totalSteps)
+{
+    this->soc->memory->Write32(PW_ADDR_SESSION_STEPS, sessionSteps);
+    this->soc->memory->Write32(PW_ADDR_TOTAL_STEPS, totalSteps);
+}
+
 void PocketWalker::UseSyntheticSteps(bool value)
 {
     this->step_provider->is_enabled = value;

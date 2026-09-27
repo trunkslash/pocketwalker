@@ -12,6 +12,10 @@ object NativeBridge {
 
     external fun setSyntheticSteps(enabled: Boolean)
 
+    external fun getSessionSteps(): Int
+    external fun getTotalSteps(): Int
+    external fun restoreSteps(sessionSteps: Int, totalSteps: Int)
+
     external fun connectIr(host: String, port: Int): Boolean
     external fun disconnectIr()
     external fun irStatus(): String

@@ -415,3 +415,40 @@ Java_org_pocketwalker_android_NativeBridge_setEeprom(
 
     return JNI_TRUE;
 }
+
+
+extern "C" JNIEXPORT jint JNICALL
+Java_org_pocketwalker_android_NativeBridge_getSessionSteps(
+        JNIEnv*, jobject) {
+    std::scoped_lock lock(g_mutex);
+
+    if (!g_emulator)
+        return 0;
+
+    return static_cast<jint>(g_emulator->GetSessionSteps());
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_org_pocketwalker_android_NativeBridge_getTotalSteps(
+        JNIEnv*, jobject) {
+    std::scoped_lock lock(g_mutex);
+
+    if (!g_emulator)
+        return 0;
+
+    return static_cast<jint>(g_emulator->GetTotalSteps());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_pocketwalker_android_NativeBridge_restoreSteps(
+        JNIEnv*, jobject, jint sessionSteps, jint totalSteps) {
+    std::scoped_lock lock(g_mutex);
+
+    if (!g_emulator)
+        return;
+
+    g_emulator->RestoreSteps(
+        static_cast<uint32_t>(sessionSteps),
+        static_cast<uint32_t>(totalSteps)
+    );
+}
