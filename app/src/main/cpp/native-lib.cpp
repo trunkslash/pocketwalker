@@ -40,71 +40,31 @@ bool g_tx_pending = false;
 
 constexpr int AUDIO_SAMPLE_RATE = 32000;
 constexpr float AUDIO_MIN_FREQUENCY = 120.0f;
-constexpr float AUDIO_BASE_AMPLITUDE = 16384.0f;
-constexpr int AUDIO_FADE_SAMPLES = AUDIO_SAMPLE_RATE / 333;
-constexpr size_t AUDIO_MAX_BUFFERED_SAMPLES = AUDIO_SAMPLE_RATE / 2;
+constexpr float AUDIO_AMPLITUDE = 10000.0f;
+
 std::mutex g_audio_mutex;
-std::deque<int16_t> g_audio_samples;
+float g_audio_frequency = 0.0f;
 float g_audio_phase = 0.0f;
-float g_audio_current_freq = 0.0f;
-int g_audio_fade_counter = 0;
-bool g_audio_playing = false;
+bool g_audio_full_volume = true;
 
 void resetAudio() {
     std::scoped_lock lock(g_audio_mutex);
-    g_audio_samples.clear();
+    g_audio_frequency = 0.0f;
     g_audio_phase = 0.0f;
-    g_audio_current_freq = 0.0f;
-    g_audio_fade_counter = 0;
-    g_audio_playing = false;
+    g_audio_full_volume = true;
 }
 
 void pushAudioSample(BuzzerInformation info) {
     std::scoped_lock lock(g_audio_mutex);
-    const bool isActive = info.frequency >= AUDIO_MIN_FREQUENCY;
 
-    if (isActive && !g_audio_playing) {
-        g_audio_current_freq = info.frequency;
-        g_audio_playing = true;
-        g_audio_fade_counter = 0;
-    } else if (!isActive && g_audio_playing) {
-        g_audio_playing = false;
-        g_audio_fade_counter = AUDIO_FADE_SAMPLES;
-    } else if (isActive && info.frequency != g_audio_current_freq) {
-        g_audio_current_freq = info.frequency;
+    if (info.frequency >= AUDIO_MIN_FREQUENCY) {
+        // Timer W frequency represents the buzzer transition timing.
+        // A complete square-wave cycle requires two transitions.
+        g_audio_frequency = info.frequency;
+        g_audio_full_volume = info.is_full_volume;
+    } else {
+        g_audio_frequency = 0.0f;
     }
-
-    float raw = 0.0f;
-    if (g_audio_current_freq >= AUDIO_MIN_FREQUENCY && (g_audio_playing || g_audio_fade_counter > 0)) {
-        constexpr float PI = 3.14159265358979323846f;
-        const float nyquist = AUDIO_SAMPLE_RATE / 2.0f;
-        const int maxHarmonic = static_cast<int>(std::floor(nyquist / g_audio_current_freq));
-        float sample = 0.0f;
-        for (int h = 1; h <= maxHarmonic; h += 2)
-            sample += std::sin(2.0f * PI * static_cast<float>(h) * g_audio_phase) / static_cast<float>(h);
-
-        const float amplitude = info.is_full_volume ? AUDIO_BASE_AMPLITUDE : AUDIO_BASE_AMPLITUDE / 2.0f;
-        raw = sample * (4.0f / PI) * amplitude;
-
-        if (g_audio_playing && g_audio_fade_counter < AUDIO_FADE_SAMPLES) {
-            const float t = static_cast<float>(g_audio_fade_counter) / static_cast<float>(AUDIO_FADE_SAMPLES);
-            raw *= t * t;
-            ++g_audio_fade_counter;
-        } else if (!g_audio_playing && g_audio_fade_counter > 0) {
-            const float t = static_cast<float>(g_audio_fade_counter) / static_cast<float>(AUDIO_FADE_SAMPLES);
-            raw *= t * t;
-            --g_audio_fade_counter;
-        }
-
-        raw = std::clamp(raw, -32768.0f, 32767.0f);
-    }
-
-    g_audio_phase += g_audio_current_freq / static_cast<float>(AUDIO_SAMPLE_RATE);
-    g_audio_phase -= std::floor(g_audio_phase);
-
-    if (g_audio_samples.size() >= AUDIO_MAX_BUFFERED_SAMPLES)
-        g_audio_samples.pop_front();
-    g_audio_samples.push_back(static_cast<int16_t>(raw));
 }
 
 void setIrStatus(const std::string& value) {
@@ -343,21 +303,54 @@ Java_org_pocketwalker_android_NativeBridge_irStatus(JNIEnv* env, jobject) {
 }
 
 extern "C" JNIEXPORT jshortArray JNICALL
-Java_org_pocketwalker_android_NativeBridge_getAudioSamples(JNIEnv* env, jobject, jint maxSamples) {
-    if (maxSamples <= 0) return env->NewShortArray(0);
-    std::vector<int16_t> samples;
+Java_org_pocketwalker_android_NativeBridge_getAudioSamples(
+        JNIEnv* env, jobject, jint maxSamples) {
+
+    if (maxSamples <= 0)
+        return env->NewShortArray(0);
+
+    std::vector<int16_t> samples(static_cast<size_t>(maxSamples));
+
     {
         std::scoped_lock lock(g_audio_mutex);
-        const size_t count = std::min(static_cast<size_t>(maxSamples), g_audio_samples.size());
-        samples.reserve(count);
-        for (size_t i = 0; i < count; ++i) {
-            samples.push_back(g_audio_samples.front());
-            g_audio_samples.pop_front();
+
+        const float frequency = g_audio_frequency;
+        const float amplitude =
+            g_audio_full_volume ? AUDIO_AMPLITUDE : AUDIO_AMPLITUDE * 0.5f;
+
+        if (frequency >= AUDIO_MIN_FREQUENCY) {
+            const float phaseStep =
+                frequency / static_cast<float>(AUDIO_SAMPLE_RATE);
+
+            for (jint i = 0; i < maxSamples; ++i) {
+                // The real PokéWalker buzzer is driven by a square wave.
+                samples[static_cast<size_t>(i)] =
+                    g_audio_phase < 0.5f
+                        ? static_cast<int16_t>(amplitude)
+                        : static_cast<int16_t>(-amplitude);
+
+                g_audio_phase += phaseStep;
+
+                if (g_audio_phase >= 1.0f)
+                    g_audio_phase -= 1.0f;
+            }
+        } else {
+            std::fill(samples.begin(), samples.end(), 0);
         }
     }
-    jshortArray out = env->NewShortArray(static_cast<jsize>(samples.size()));
-    if (!out || samples.empty()) return out;
-    env->SetShortArrayRegion(out, 0, static_cast<jsize>(samples.size()), reinterpret_cast<const jshort*>(samples.data()));
+
+    jshortArray out = env->NewShortArray(maxSamples);
+
+    if (!out)
+        return nullptr;
+
+    env->SetShortArrayRegion(
+        out,
+        0,
+        maxSamples,
+        reinterpret_cast<const jshort*>(samples.data())
+    );
+
     return out;
 }
 

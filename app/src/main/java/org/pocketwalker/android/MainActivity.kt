@@ -152,7 +152,7 @@ root.addView(stepControls)
         audioRunning.set(true)
         audioThread = Thread {
             while (audioRunning.get()) {
-                val samples = NativeBridge.getAudioSamples(1024)
+                val samples = NativeBridge.getAudioSamples(128)
                 if (samples.isNotEmpty()) audioTrack?.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
                 else try { Thread.sleep(2) } catch (_: InterruptedException) { break }
             }

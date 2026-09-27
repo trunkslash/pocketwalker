@@ -8,3 +8,13 @@ release
 # Personal
 roms
 docs
+# Local Android / Gradle files
+.gradle/
+app/.cxx/
+app/build/
+gradle-8.9/
+gradle-8.9-bin.zip
+local.properties
+
+# Temporary backups
+*.audio-backup
