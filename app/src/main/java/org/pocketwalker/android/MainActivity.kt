@@ -325,7 +325,7 @@ private fun restoreStepsDelayed() {
 
         // Start normal autosaving only after boot restoration.
         saveHandler.postDelayed(autosaveRunnable, 5000)
-    }, 2000)
+    }, 15000)
 }
 
 private fun displayName(uri: Uri): String {
